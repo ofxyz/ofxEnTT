@@ -63,6 +63,7 @@ struct size_of: std::integral_constant<std::size_t, 0u> {};
 /*! @copydoc size_of */
 template<typename Type>
 struct size_of<Type, std::void_t<decltype(sizeof(Type))>>
+    // NOLINTNEXTLINE(bugprone-sizeof-expression)
     : std::integral_constant<std::size_t, sizeof(Type)> {};
 
 /**
@@ -345,6 +346,7 @@ struct type_list_transform;
 template<typename... Type, template<typename...> class Op>
 struct type_list_transform<type_list<Type...>, Op> {
     /*! @brief Resulting type list after applying the transform function. */
+    // NOLINTNEXTLINE(modernize-type-traits)
     using type = type_list<typename Op<Type>::type...>;
 };
 
@@ -574,7 +576,7 @@ inline constexpr bool value_list_contains_v = value_list_contains<List, Value>::
 
 /*! @brief Primary template isn't defined on purpose. */
 template<typename...>
-class value_list_diff;
+struct value_list_diff;
 
 /**
  * @brief Computes the difference between two value lists.
@@ -582,12 +584,9 @@ class value_list_diff;
  * @tparam Other Values provided by the second value list.
  */
 template<auto... Value, auto... Other>
-class value_list_diff<value_list<Value...>, value_list<Other...>> {
-    using v141_toolset_workaround = value_list<Other...>;
-
-public:
+struct value_list_diff<value_list<Value...>, value_list<Other...>> {
     /*! @brief A value list that is the difference between the two value lists. */
-    using type = value_list_cat_t<std::conditional_t<value_list_contains_v<v141_toolset_workaround, Value>, value_list<>, value_list<Value>>...>;
+    using type = value_list_cat_t<std::conditional_t<value_list_contains_v<value_list<Other...>, Value>, value_list<>, value_list<Value>>...>;
 };
 
 /**
@@ -692,7 +691,7 @@ struct has_iterator_category<Type, std::void_t<typename std::iterator_traits<Typ
 
 /*! @copydoc is_iterator */
 template<typename Type>
-struct is_iterator<Type, std::enable_if_t<!std::is_void_v<std::remove_cv_t<std::remove_pointer_t<Type>>>>>
+struct is_iterator<Type, std::enable_if_t<!std::is_void_v<std::remove_const_t<std::remove_pointer_t<Type>>>>>
     : internal::has_iterator_category<Type> {};
 
 /**
@@ -772,27 +771,25 @@ template<typename Type>
 
 template<typename Type>
 [[nodiscard]] constexpr bool dispatch_is_equality_comparable() {
+    // NOLINTBEGIN(modernize-use-transparent-functors)
     if constexpr(std::is_array_v<Type>) {
         return false;
-    } else if constexpr(is_iterator_v<Type>) {
-        return maybe_equality_comparable<Type>(0);
-    } else if constexpr(has_value_type<Type>::value) {
-        if constexpr(std::is_same_v<typename Type::value_type, Type>) {
-            return maybe_equality_comparable<Type>(0);
-        } else if constexpr(dispatch_is_equality_comparable<typename Type::value_type>()) {
-            return maybe_equality_comparable<Type>(0);
-        } else {
-            return false;
-        }
-    } else if constexpr(is_complete_v<std::tuple_size<std::remove_cv_t<Type>>>) {
+    } else if constexpr(is_complete_v<std::tuple_size<std::remove_const_t<Type>>>) {
         if constexpr(has_tuple_size_value<Type>::value) {
             return maybe_equality_comparable<Type>(0) && unpack_maybe_equality_comparable<Type>(std::make_index_sequence<std::tuple_size<Type>::value>{});
         } else {
             return maybe_equality_comparable<Type>(0);
         }
+    } else if constexpr(has_value_type<Type>::value) {
+        if constexpr(is_iterator_v<Type> || std::is_same_v<typename Type::value_type, Type> || dispatch_is_equality_comparable<typename Type::value_type>()) {
+            return maybe_equality_comparable<Type>(0);
+        } else {
+            return false;
+        }
     } else {
         return maybe_equality_comparable<Type>(0);
     }
+    // NOLINTEND(modernize-use-transparent-functors)
 }
 
 } // namespace internal
@@ -873,9 +870,9 @@ template<typename Member>
 using member_class_t = typename member_class<Member>::type;
 
 /**
- * @brief Extracts the n-th argument of a given function or member function.
+ * @brief Extracts the n-th argument of a _callable_ type.
  * @tparam Index The index of the argument to extract.
- * @tparam Candidate A valid function, member function or data member type.
+ * @tparam Candidate A valid _callable_ type.
  */
 template<std::size_t Index, typename Candidate>
 class nth_argument {
@@ -891,8 +888,11 @@ class nth_argument {
     template<typename Type, typename Class>
     static constexpr type_list<Type> pick_up(Type Class ::*);
 
+    template<typename Type>
+    static constexpr decltype(pick_up(&Type::operator())) pick_up(Type &&);
+
 public:
-    /*! @brief N-th argument of the given function or member function. */
+    /*! @brief N-th argument of the _callable_ type. */
     using type = type_list_element_t<Index, decltype(pick_up(std::declval<Candidate>()))>;
 };
 

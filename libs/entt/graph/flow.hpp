@@ -29,9 +29,9 @@ template<typename Allocator>
 class basic_flow {
     using alloc_traits = std::allocator_traits<Allocator>;
     static_assert(std::is_same_v<typename alloc_traits::value_type, id_type>, "Invalid value type");
-    using task_container_type = dense_set<id_type, identity, std::equal_to<id_type>, typename alloc_traits::template rebind_alloc<id_type>>;
+    using task_container_type = dense_set<id_type, identity, std::equal_to<>, typename alloc_traits::template rebind_alloc<id_type>>;
     using ro_rw_container_type = std::vector<std::pair<std::size_t, bool>, typename alloc_traits::template rebind_alloc<std::pair<std::size_t, bool>>>;
-    using deps_container_type = dense_map<id_type, ro_rw_container_type, identity, std::equal_to<id_type>, typename alloc_traits::template rebind_alloc<std::pair<const id_type, ro_rw_container_type>>>;
+    using deps_container_type = dense_map<id_type, ro_rw_container_type, identity, std::equal_to<>, typename alloc_traits::template rebind_alloc<std::pair<const id_type, ro_rw_container_type>>>;
     using adjacency_matrix_type = adjacency_matrix<directed_tag, typename alloc_traits::template rebind_alloc<std::size_t>>;
 
     void emplace(const id_type res, const bool is_rw) {
@@ -135,8 +135,7 @@ public:
     explicit basic_flow(const allocator_type &allocator)
         : index{0u, allocator},
           vertices{allocator},
-          deps{allocator},
-          sync_on{} {}
+          deps{allocator} {}
 
     /*! @brief Default copy constructor. */
     basic_flow(const basic_flow &) = default;
@@ -166,6 +165,9 @@ public:
           deps{std::move(other.deps), allocator},
           sync_on{other.sync_on} {}
 
+    /*! @brief Default destructor. */
+    ~basic_flow() = default;
+
     /**
      * @brief Default copy assignment operator.
      * @return This flow builder.
@@ -177,6 +179,18 @@ public:
      * @return This flow builder.
      */
     basic_flow &operator=(basic_flow &&) noexcept = default;
+
+    /**
+     * @brief Exchanges the contents with those of a given flow builder.
+     * @param other Flow builder to exchange the content with.
+     */
+    void swap(basic_flow &other) noexcept {
+        using std::swap;
+        std::swap(index, other.index);
+        std::swap(vertices, other.vertices);
+        std::swap(deps, other.deps);
+        std::swap(sync_on, other.sync_on);
+    }
 
     /**
      * @brief Returns the associated allocator.
@@ -192,7 +206,7 @@ public:
      * @return The requested identifier.
      */
     [[nodiscard]] id_type operator[](const size_type pos) const {
-        return vertices.cbegin()[pos];
+        return vertices.cbegin()[static_cast<typename task_container_type::difference_type>(pos)];
     }
 
     /*! @brief Clears the flow builder. */
@@ -204,15 +218,11 @@ public:
     }
 
     /**
-     * @brief Exchanges the contents with those of a given flow builder.
-     * @param other Flow builder to exchange the content with.
+     * @brief Returns true if a flow builder contains no tasks, false otherwise.
+     * @return True if the flow builder contains no tasks, false otherwise.
      */
-    void swap(basic_flow &other) {
-        using std::swap;
-        std::swap(index, other.index);
-        std::swap(vertices, other.vertices);
-        std::swap(deps, other.deps);
-        std::swap(sync_on, other.sync_on);
+    [[nodiscard]] bool empty() const noexcept {
+        return vertices.empty();
     }
 
     /**
@@ -333,7 +343,7 @@ private:
     compressed_pair<size_type, allocator_type> index;
     task_container_type vertices;
     deps_container_type deps;
-    size_type sync_on;
+    size_type sync_on{};
 };
 
 } // namespace entt

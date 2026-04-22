@@ -37,7 +37,7 @@ void orphans(Registry &registry) {
  * @brief Utility class to create snapshots from a registry.
  *
  * A _snapshot_ can be either a dump of the entire registry or a narrower
- * selection of components of interest.<br/>
+ * selection of elements of interest.<br/>
  * This type can be used in both cases if provided with a correctly configured
  * output archive.
  *
@@ -46,7 +46,7 @@ void orphans(Registry &registry) {
 template<typename Registry>
 class basic_snapshot {
     static_assert(!std::is_const_v<Registry>, "Non-const registry type required");
-    using traits_type = typename Registry::traits_type;
+    using traits_type = entt_traits<typename Registry::entity_type>;
 
 public:
     /*! Basic registry type. */
@@ -61,10 +61,25 @@ public:
     basic_snapshot(const registry_type &source) noexcept
         : reg{&source} {}
 
+    /*! @brief Default copy constructor, deleted on purpose. */
+    basic_snapshot(const basic_snapshot &) = delete;
+
     /*! @brief Default move constructor. */
     basic_snapshot(basic_snapshot &&) noexcept = default;
 
-    /*! @brief Default move assignment operator. @return This snapshot. */
+    /*! @brief Default destructor. */
+    ~basic_snapshot() = default;
+
+    /**
+     * @brief Default copy assignment operator, deleted on purpose.
+     * @return This snapshot.
+     */
+    basic_snapshot &operator=(const basic_snapshot &) = delete;
+
+    /**
+     * @brief Default move assignment operator.
+     * @return This snapshot.
+     */
     basic_snapshot &operator=(basic_snapshot &&) noexcept = default;
 
     /**
@@ -78,17 +93,17 @@ public:
     template<typename Type, typename Archive>
     const basic_snapshot &get(Archive &archive, const id_type id = type_hash<Type>::value()) const {
         if(const auto *storage = reg->template storage<Type>(id); storage) {
+            const typename registry_type::common_type &base = *storage;
+
             archive(static_cast<typename traits_type::entity_type>(storage->size()));
 
             if constexpr(std::is_same_v<Type, entity_type>) {
                 archive(static_cast<typename traits_type::entity_type>(storage->free_list()));
 
-                for(auto first = storage->data(), last = first + storage->size(); first != last; ++first) {
+                for(auto first = base.rbegin(), last = base.rend(); first != last; ++first) {
                     archive(*first);
                 }
-            } else if constexpr(component_traits<Type>::in_place_delete) {
-                const typename registry_type::common_type &base = *storage;
-
+            } else if constexpr(registry_type::template storage_for_type<Type>::storage_policy == deletion_policy::in_place) {
                 for(auto it = base.rbegin(), last = base.rend(); it != last; ++it) {
                     if(const auto entt = *it; entt == tombstone) {
                         archive(static_cast<entity_type>(null));
@@ -160,7 +175,7 @@ private:
 template<typename Registry>
 class basic_snapshot_loader {
     static_assert(!std::is_const_v<Registry>, "Non-const registry type required");
-    using traits_type = typename Registry::traits_type;
+    using traits_type = entt_traits<typename Registry::entity_type>;
 
 public:
     /*! Basic registry type. */
@@ -178,10 +193,25 @@ public:
         ENTT_ASSERT(reg->template storage<entity_type>().free_list() == 0u, "Registry must be empty");
     }
 
+    /*! @brief Default copy constructor, deleted on purpose. */
+    basic_snapshot_loader(const basic_snapshot_loader &) = delete;
+
     /*! @brief Default move constructor. */
     basic_snapshot_loader(basic_snapshot_loader &&) noexcept = default;
 
-    /*! @brief Default move assignment operator. @return This loader. */
+    /*! @brief Default destructor. */
+    ~basic_snapshot_loader() = default;
+
+    /**
+     * @brief Default copy assignment operator, deleted on purpose.
+     * @return This loader.
+     */
+    basic_snapshot_loader &operator=(const basic_snapshot_loader &) = delete;
+
+    /**
+     * @brief Default move assignment operator.
+     * @return This loader.
+     */
     basic_snapshot_loader &operator=(basic_snapshot_loader &&) noexcept = default;
 
     /**
@@ -201,15 +231,18 @@ public:
 
         if constexpr(std::is_same_v<Type, entity_type>) {
             typename traits_type::entity_type count{};
+            entity_type placeholder{};
 
             storage.reserve(length);
             archive(count);
 
             for(entity_type entity = null; length; --length) {
                 archive(entity);
-                storage.emplace(entity);
+                storage.generate(entity);
+                placeholder = (entity > placeholder) ? entity : placeholder;
             }
 
+            storage.start_from(traits_type::next(placeholder));
             storage.free_list(count);
         } else {
             auto &other = reg->template storage<entity_type>();
@@ -217,7 +250,7 @@ public:
 
             while(length--) {
                 if(archive(entt); entt != null) {
-                    const auto entity = other.contains(entt) ? entt : other.emplace(entt);
+                    const auto entity = other.contains(entt) ? entt : other.generate(entt);
                     ENTT_ASSERT(entity == entt, "Entity not available for use");
 
                     if constexpr(std::tuple_size_v<decltype(storage.get_as_tuple({}))> == 0u) {
@@ -235,10 +268,10 @@ public:
     }
 
     /**
-     * @brief Destroys those entities that have no components.
+     * @brief Destroys those entities that have no elements.
      *
-     * In case all the entities were serialized but only part of the components
-     * was saved, it could happen that some of the entities have no components
+     * In case all the entities were serialized but only part of the elements
+     * was saved, it could happen that some of the entities have no elements
      * once restored.<br/>
      * This function helps to identify and destroy those entities.
      *
@@ -272,7 +305,7 @@ private:
 template<typename Registry>
 class basic_continuous_loader {
     static_assert(!std::is_const_v<Registry>, "Non-const registry type required");
-    using traits_type = typename Registry::traits_type;
+    using traits_type = entt_traits<typename Registry::entity_type>;
 
     void restore(typename Registry::entity_type entt) {
         if(const auto entity = to_entity(entt); remloc.contains(entity) && remloc[entity].first == entt) {
@@ -343,11 +376,26 @@ public:
         : remloc{source.get_allocator()},
           reg{&source} {}
 
-    /*! @brief Default move constructor. */
-    basic_continuous_loader(basic_continuous_loader &&) = default;
+    /*! @brief Default copy constructor, deleted on purpose. */
+    basic_continuous_loader(const basic_continuous_loader &) = delete;
 
-    /*! @brief Default move assignment operator. @return This loader. */
-    basic_continuous_loader &operator=(basic_continuous_loader &&) = default;
+    /*! @brief Default move constructor. */
+    basic_continuous_loader(basic_continuous_loader &&) noexcept = default;
+
+    /*! @brief Default destructor. */
+    ~basic_continuous_loader() = default;
+
+    /**
+     * @brief Default copy assignment operator, deleted on purpose.
+     * @return This loader.
+     */
+    basic_continuous_loader &operator=(const basic_continuous_loader &) = delete;
+
+    /**
+     * @brief Default move assignment operator.
+     * @return This loader.
+     */
+    basic_continuous_loader &operator=(basic_continuous_loader &&) noexcept = default;
 
     /**
      * @brief Restores all elements of a type with associated identifiers.
@@ -417,10 +465,10 @@ public:
     }
 
     /**
-     * @brief Destroys those entities that have no components.
+     * @brief Destroys those entities that have no elements.
      *
-     * In case all the entities were serialized but only part of the components
-     * was saved, it could happen that some of the entities have no components
+     * In case all the entities were serialized but only part of the elements
+     * was saved, it could happen that some of the entities have no elements
      * once restored.<br/>
      * This function helps to identify and destroy those entities.
      *

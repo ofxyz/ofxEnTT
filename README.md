@@ -14,4 +14,4 @@ Simply include the single header file as originally intended:
 
 ## EnTT Version
 
- - 3.13.2
+ - 3.16.0
